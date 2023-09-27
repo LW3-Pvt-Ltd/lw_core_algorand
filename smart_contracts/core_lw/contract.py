@@ -11,36 +11,47 @@ class IotDevice(abi.NamedTuple):
     iotURL: abi.Field[abi.String]
     ipfsHash: abi.Field[abi.String]
 
+class _owner(abi.NamedTuple):
+    addr: abi.Field[abi.Address]
+
 class iotShipping:
     # mapping(url=> iotdevices)
     iot_devices_mapping = BoxMapping(abi.String, IotDevice)
 
     # assign owner
-    owner = GlobalStateValue(
+    deployer = GlobalStateValue(
         stack_type=TealType.bytes,
         key="g",
         default=Global.creator_address(),
         descr="The current governor of this contract, allowed to do admin type actions",
     )
-    
+
+    owner = BoxMapping(_owner, abi.String)
+
 app = (Application("iotShipping", state= iotShipping())
     # On create, init app state
     .apply(unconditional_create_approval, initialize_global_state=True)
 )
 
 # Only the account set in global_state.owner may call this method
-@app.external(authorize=Authorize.only(app.state.owner))
-def set_owner(new_governor: abi.Account) -> Expr:
+@app.external(authorize=Authorize.only(app.state.deployer))
+def set_owner(new_governor: abi.Address) -> Expr:
     """sets the owner of the contract, may only be called by the current governor"""
-    return app.state.owner.set(new_governor.address())
+    _addr = _owner()
+    status = abi.String()
+    return Seq(
+        _addr.set(new_governor),
+        status.set('owned'),
+        app.state.owner[_addr].set(status),
+    )
 
 # function for add iot devices
 # @params `_iotURL` & `_ipfsHash`: url and the hash of the devices that user want to add
-@app.external(authorize=Authorize.only(app.state.owner))
+@app.external
 def add_IOT_device(_iotURL: abi.String, _ipfsHash: abi.String) -> Expr:
     iotShipping_tuple = IotDevice()
-
     return Seq(
+        Assert(app.state.owner[Txn.sender()].exists() == Int(1)),
         iotShipping_tuple.set(_iotURL, _ipfsHash),
         app.state.iot_devices_mapping[_iotURL.get()].set(iotShipping_tuple),
     )
